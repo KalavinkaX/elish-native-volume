@@ -1,0 +1,6 @@
+id=elish_volume_steps
+name=Elish Native App Volume (Device Test)
+version=3.1.0-key-test1
+versionCode=11
+author=Kalav & OpenAI
+description=0-100 global media volume and quiet speaker curve; persistent session attenuation backend with authenticated local IPC. Native SystemUI sliders and speaker media key acceleration require the matching LSPosed APK (System UI + Android scope). No accessibility overlay or repeated su from UI. Reboot required.

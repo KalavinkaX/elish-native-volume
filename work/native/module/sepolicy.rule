@@ -1,0 +1,3 @@
+# Abstract UNIX socket; SO_PEERCRED and process name are checked before dispatch.
+# Device log identifies SystemUI as u:r:platform_app:s0:c512,c768.
+allow platform_app magisk unix_stream_socket connectto

@@ -1,0 +1,9 @@
+Lcom/android/server/media/MediaSessionService$SessionManagerImpl;->dispatchVolumeKeyEventLocked(Ljava/lang/String;Ljava/lang/String;IIZLandroid/view/KeyEvent;IZ)V
+Lcom/android/server/audio/AudioService;->handleVolumeKey(Landroid/view/KeyEvent;ZLjava/lang/String;Ljava/lang/String;)V
+Lcom/android/server/audio/AudioService;->adjustStreamVolume(IIILandroid/media/AudioDeviceAttributes;Ljava/lang/String;Ljava/lang/String;IILjava/lang/String;ZI)V
+Lcom/android/server/audio/AudioService;->rescaleStep(III)I
+Lcom/android/server/audio/AudioService;->getStreamMinVolume(I)I
+Lcom/android/server/audio/AudioService;->getStreamMaxVolume(I)I
+Lcom/android/server/audio/AudioService;->getStreamVolume(I)I
+Lcom/android/server/audio/AudioService;->getDeviceForStream(I)I
+Lcom/android/server/audio/AudioService;->mMode:AtomicInteger
