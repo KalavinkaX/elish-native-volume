@@ -9,7 +9,7 @@ import zipfile
 from compile_helper import ROOT, JAVA, JAVAC, JAVA_HOME, R8, run, compile_helper
 from dexcheck import verify_rom, verify_services, classes as dexclasses
 
-VERSION='3.1.0-key-test1'
+VERSION='3.2.0-stability-test1'
 OUT=ROOT.parents[1]/'outputs'
 SDK=Path(os.environ.get('ELISH_ANDROID_SDK',ROOT.parent/'android-sdk'))
 PLATFORM=Path(os.environ.get('ELISH_ANDROID_JAR',SDK/'android-36/android.jar'))
@@ -83,7 +83,7 @@ def main():
     report=('Elish Native Volume '+VERSION+'\nHost tests only. Android API36 compile, target35, real target ROM API37.\n'
         'Passed ROM DEX member ABI check against the exact SystemUI SHA256.\n'
         'APK zipalign and signature verification completed; Xposed API is compile-only.\n'
-        'User reports 3.0.2 fixes tested successfully. New 3.1.0 key acceleration is not device-tested: system_server scope loading, key delivery/async correlation, actual native steps and release behavior require device validation. Host policy tests and exact services.jar ABI checks do not simulate system_server routing or acoustics.\n\n'+tests.stdout+tests.stderr)
+        'Stability release: host-tested only. Previous 3.1.0 functionality was reported working by the device owner. Adaptive polling, cooldown, pause expiry and UI timer changes still require on-device validation. Host tests and exact ROM ABI checks do not simulate Android audio routing, acoustics, temperature or hardware reliability.\n\n'+tests.stdout+tests.stderr)
     testreport=OUT/('测试报告-v'+VERSION+'.txt');testreport.write_text(report,encoding='utf-8',newline='\n')
     if tests.returncode:print(report);raise SystemExit(tests.returncode)
     module=ROOT/'module'
@@ -100,6 +100,8 @@ def main():
     sourcefiles += [(p,p.name) for p in ROOT.glob('*.py')]
     sourcefiles += [(ROOT/n,n) for n in ('ROM-ABI.txt','SERVICES-ABI.txt','APK-BUILD.txt','DEPENDENCIES.md','seapp-evidence.txt')]
     sourcefiles += [(testreport,'HOST-TEST-REPORT.txt')]
+    sourcefiles += [(ROOT.parents[1]/name,'repository/'+name) for name in ('README.md','LICENSE','CHANGELOG.md')]
+    sourcefiles += [(p,'repository/docs/'+p.name) for p in (ROOT.parents[1]/'docs').glob('*.md')]
     source=OUT/('Elish-Volume-Native-v'+VERSION+'-source.zip');archive(source,sourcefiles)
     with zipfile.ZipFile(source) as z:assert not any(n.endswith(('.p12','.jks')) or 'signing-password' in n for n in z.namelist())
     deliverables=[package,companion,instructions,testreport,source]

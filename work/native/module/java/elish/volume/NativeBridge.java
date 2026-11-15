@@ -147,6 +147,7 @@ public final class NativeBridge implements Closeable {
             }
             saved.put(rule.key(),rule);
             AppVolume.resolve(saved.values(),backend,true);AppVolume.save(target,saved.values());
+            AppVolume.signalConfigChange();
         }
     }
     static String row(String pkg,int user,int uid,int percent,boolean shared) {

@@ -40,7 +40,7 @@ set_index() {
   echo "Media volume: $CURRENT / $MAXIMUM (API readback; not a sound-pressure measurement)"
 }
 status() {
-  echo "Elish Volume 3.1.0-key-test1"
+  echo "Elish Volume 3.2.0-stability-test1"
   echo "Device: $(getprop ro.product.device)"
   echo "Requested property: $(getprop ro.config.media_vol_steps)"
   query_volume || return 1

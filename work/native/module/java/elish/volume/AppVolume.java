@@ -219,6 +219,19 @@ public final class AppVolume {
         final Map<Integer,Integer> owners=new HashMap<Integer,Integer>();
         final Map<Integer,Long> lastSeen=new HashMap<Integer,Long>(),checked=new HashMap<Integer,Long>();
         final Map<Integer,Integer> applied=new HashMap<Integer,Integer>();
+        final Map<Integer,Long> retryAt=new HashMap<Integer,Long>();
+        final Map<Integer,Integer> failures=new HashMap<Integer,Integer>();
+        final Map<Integer,String> failureText=new HashMap<Integer,String>();
+        void failed(int session,Exception ex,long now) {
+            int count=Math.min(6,failures.containsKey(session)?failures.get(session)+1:1);
+            failures.put(session,count);retryAt.put(session,now+Math.min(30000L,1000L<<(count-1)));
+            failureText.put(session,message(ex));
+        }
+        boolean cooling(int session,long now) {return retryAt.containsKey(session)&&now<retryAt.get(session);}
+        void clearFailure(int session) {retryAt.remove(session);failures.remove(session);failureText.remove(session);}
+        void forget(int session) {
+            effects.remove(session);owners.remove(session);lastSeen.remove(session);applied.remove(session);checked.remove(session);
+        }
         final Map<Integer,String> report=new TreeMap<Integer,String>();
         public SessionEngine(EffectFactory factory) { this.factory=factory; }
         public synchronized void tick(List<Player> players, Map<Integer,Integer> levels) {
@@ -231,7 +244,7 @@ public final class AppVolume {
             Set<Integer> pending=new HashSet<Integer>(),unsafe=new HashSet<Integer>();
             report.clear();
             for (Player p:players) {
-                if (p.session<=0 || p.state==0) continue;
+                if (p.session<=0) continue;
                 if (!p.media() || p.uid%100000<10000) conflicts.add(p.session);
                 Integer owner=sessions.put(p.session,p.uid);
                 if (owner!=null && owner!=p.uid) conflicts.add(p.session);
@@ -249,8 +262,13 @@ public final class AppVolume {
                 // Keep an already attached insert at unity. Releasing it at the
                 // slider endpoint rebuilds the audio chain and can cause a burst.
                 // Apps first seen at 100% still need no effect.
-                if (p.state==2 || effects.containsKey(p.session)) {
+                if (p.state==2) {
                     desired.put(p.session,p.uid);lastSeen.put(p.session,now);
+                } else if (p.state==3 && effects.containsKey(p.session)
+                    && Objects.equals(owners.get(p.session),p.uid)
+                    && now-lastSeen.get(p.session)<5000) {
+                    // Pause retains the chain briefly, without renewing its lifetime.
+                    desired.put(p.session,p.uid);
                 }
             }
             // A transient AudioService snapshot gap must not remove attenuation.
@@ -258,17 +276,32 @@ public final class AppVolume {
             for(Integer session:effects.keySet()){
                 int uid=owners.get(session);Integer level=levels.get(uid);
                 if(!desired.containsKey(session)&&level!=null&&!conflicts.contains(session)
-                    &&(!sessions.containsKey(session)||sessions.get(session)==uid)
+                    &&!sessions.containsKey(session)
                     &&now-lastSeen.get(session)<1200) desired.put(session,uid);
             }
             for (Integer session:new ArrayList<Integer>(effects.keySet())) {
                 if (!desired.containsKey(session) || !Objects.equals(owners.get(session),desired.get(session))) {
-                    try { effects.get(session).release(); effects.remove(session); owners.remove(session);lastSeen.remove(session);applied.remove(session);checked.remove(session); }
-                    catch (Exception ex) { log("Effect release "+session+": "+message(ex)); }
+                    if(cooling(session,now)) {
+                        report.put(owners.get(session),"ERROR: release retry pending session="+session+" "+failureText.get(session));
+                        continue;
+                    }
+                    try { effects.get(session).release(); forget(session);clearFailure(session); }
+                    catch (Exception ex) {
+                        failed(session,ex,now);
+                        report.put(owners.get(session),"ERROR: release session="+session+" "+message(ex));
+                        log("Effect release "+session+": "+message(ex));
+                    }
                 }
             }
             for (Map.Entry<Integer,Integer> entry:desired.entrySet()) {
                 int session=entry.getKey(),uid=entry.getValue();
+                // A failed release must never transfer an old handle to a different UID.
+                if(effects.containsKey(session)&&!Objects.equals(owners.get(session),uid)) {
+                    report.put(uid,"ERROR: previous session owner could not be released");continue;
+                }
+                if(cooling(session,now)) {
+                    report.put(uid,"ERROR: retry pending session="+session+" "+failureText.get(session));continue;
+                }
                 try {
                     SessionEffect effect=effects.get(session);
                     boolean created=effect==null;
@@ -278,15 +311,26 @@ public final class AppVolume {
                     if(created||!Objects.equals(applied.get(session),levels.get(uid))||now-checked.get(session)>=1000){
                         effect.level(levels.get(uid));applied.put(session,levels.get(uid));checked.put(session,now);
                     }
+                    clearFailure(session);
                     String previous=report.get(uid);
                     if (previous==null || !previous.startsWith("ERROR:")) report.put(uid,"PARAMETER_OK: session="+session+" gain="+gainDb(levels.get(uid))+"dB");
                 } catch(Exception ex) {
+                    failed(session,ex,now);
                     report.put(uid,"ERROR: session="+session+" "+message(ex));
                     SessionEffect failed=effects.get(session);
                     // Keep an established attenuator on a transient readback/control error.
                     // Releasing it would unexpectedly restore full output.
-                    if (failed!=null&&!applied.containsKey(session)) try { failed.release(); effects.remove(session); owners.remove(session);checked.remove(session); } catch(Exception ignored) {}
+                    if (failed!=null&&!applied.containsKey(session)) try { failed.release(); forget(session); } catch(Exception ignored) {}
                 }
+            }
+            for(Integer session:new ArrayList<Integer>(retryAt.keySet())) {
+                if(!effects.containsKey(session)&&!desired.containsKey(session)) {
+                    clearFailure(session);lastSeen.remove(session);
+                }
+            }
+            // Avoid retaining timestamps for sessions whose creation failed and then ended.
+            for(Integer session:new ArrayList<Integer>(lastSeen.keySet())) {
+                if(!effects.containsKey(session)&&!desired.containsKey(session))lastSeen.remove(session);
             }
             for(Integer uid:pending)if(!report.containsKey(uid))report.put(uid,"WAITING: audio session not ready");
             for(Integer uid:unsafe){
@@ -295,10 +339,13 @@ public final class AppVolume {
             }
         }
         public synchronized void restore() throws Exception {
+            Exception failure=null;
             for (Integer session:new ArrayList<Integer>(effects.keySet())) {
-                effects.get(session).release(); effects.remove(session); owners.remove(session);lastSeen.remove(session);applied.remove(session);checked.remove(session);
+                try { effects.get(session).release(); forget(session);clearFailure(session); }
+                catch(Exception ex) {if(failure==null)failure=ex;else failure.addSuppressed(ex);}
             }
             report.clear();
+            if(failure!=null)throw failure;
         }
         public int controlledCount() { return effects.size(); }
     }
@@ -396,6 +443,16 @@ public final class AppVolume {
         }catch(Exception ex){result.append(" snapshot_error=").append(message(ex));}
         return result.toString();
     }
+    static final Object changes=new Object();
+    static long changeGeneration;
+    static long generation() {synchronized(changes){return changeGeneration;}}
+    static void signalConfigChange() {synchronized(changes){changeGeneration++;changes.notifyAll();}}
+    static void awaitChange(long observed,long delay) throws InterruptedException {
+        synchronized(changes){if(changeGeneration==observed)changes.wait(delay);}
+    }
+    static long pollDelay(boolean enabled,boolean configured,boolean active) {
+        return !enabled||!configured?2000:active?100:1000;
+    }
     static void daemon(final File module, final File data) throws Exception {
         final File state=new File(module,"state");
         if (!state.isDirectory() && !state.mkdirs()) throw new IOException("Cannot create state directory");
@@ -425,7 +482,9 @@ public final class AppVolume {
                 int ruleCount=0, errors=0;
                 boolean wasEnabled=false;
                 while (!new File(module,"disable").exists() && !new File(module,"remove").exists() && module.isDirectory()) {
-                    long now=System.currentTimeMillis();
+                    long observed=generation();
+                    long now=System.nanoTime()/1000000L;
+                    long delay=2000;
                     boolean enabled=!new File(data,"disabled").exists();
                     try {
                         // Resolve package->UID afresh, so a reinstalled package cannot inherit an old UID rule indefinitely.
@@ -438,7 +497,11 @@ public final class AppVolume {
                             if(configChanged)trace(state,"RULES "+levels);
                         }
                         if (enabled && (!levels.isEmpty() || engine.controlledCount() != 0)) {
-                            engine.tick(backend.players(),levels);
+                            List<Player> players=backend.players();
+                            engine.tick(players,levels);
+                            boolean active=engine.controlledCount()!=0;
+                            for(Player player:players)if(player.state==2&&levels.containsKey(player.uid))active=true;
+                            delay=pollDelay(true,!levels.isEmpty()||engine.controlledCount()!=0,active);
                         } else if (wasEnabled && !enabled) engine.restore();
                         // Empty config also releases any previously controlled players.
                         wasEnabled=enabled;
@@ -449,21 +512,22 @@ public final class AppVolume {
                         }
                         if(afterOne!=0&&now>=afterOne){trace(state,"AFTER_1S "+playbackSnapshot(backend,levels,engine));afterOne=0;}
                         if(afterThree!=0&&now>=afterThree){trace(state,"AFTER_3S "+playbackSnapshot(backend,levels,engine));afterThree=0;}
-                        errors=0;
                         String status="enabled="+enabled+"\nrules="+ruleCount+
                             "\nresolved_uids="+levels.size()+"\nattached_session_effects="+engine.controlledCount()+
                             "\nbackend=session DynamicsProcessing; gain parameter readback, listening test still required\n"+sessionReport(engine);
                         if (now >= heartbeat || !status.equals(lastStatus)) {
                             atomic(new File(state,"app-volume-status.txt"),
-                                "heartbeat_epoch_ms="+now+"\n"+status);
-                            heartbeat=now+2000;lastStatus=status;
+                                "heartbeat_epoch_ms="+System.currentTimeMillis()+"\n"+status);
+                            heartbeat=now+30000;lastStatus=status;
                         }
+                        errors=0;
                     } catch (Exception e) {
                         log(message(e)); errors++;
-                        atomic(new File(state,"app-volume-status.txt"),"ERROR="+message(e)+"\nheartbeat_epoch_ms="+now+"\n");
+                        delay=Math.min(30000L,1000L<<Math.min(5,errors-1));
+                        atomic(new File(state,"app-volume-status.txt"),"ERROR="+message(e)+"\nheartbeat_epoch_ms="+System.currentTimeMillis()+"\n");
                         if (errors >= 10) throw new IOException("Repeated backend errors; run doctor",e);
                     }
-                    Thread.sleep(50);
+                    awaitChange(observed,delay);
                 }
                 engine.restore();
                 if (module.isDirectory()) atomic(new File(state,"app-volume-status.txt"),"stopped=true\nOwned curves were asked to terminate.\n");
@@ -486,7 +550,7 @@ public final class AppVolume {
             FileChannel ch=f.getChannel();FileLock ignored=ch.lock()){
             backend.uid(rule);
             LinkedHashMap<String,Rule> rules=readRules(rulesFile);rules.put(rule.key(),rule);
-            resolve(rules.values(),backend,true);save(rulesFile,rules.values());
+            resolve(rules.values(),backend,true);save(rulesFile,rules.values());signalConfigChange();
         }
     }
     // One app_process + root shell per UI process, instead of one cold start per slider value.
@@ -530,9 +594,9 @@ public final class AppVolume {
             System.out.println("\n=== Panel/playback transitions ===");textFile(new File(module,"state/panel-lifecycle.log"));return;
         }
         if ("status".equals(command)) {
-            System.out.println("Elish per-app volume 3.1.0-key-test1; enabled="+!new File(data,"disabled").exists());
+            System.out.println("Elish per-app volume 3.2.0-stability-test1; enabled="+!new File(data,"disabled").exists());
             File stamp=new File(module,"state/app-volume-status.txt");
-            if (!stamp.exists() || System.currentTimeMillis()-stamp.lastModified() > 10000)
+            if (!stamp.exists() || System.currentTimeMillis()-stamp.lastModified() > 90000)
                 System.out.println("WARNING: no fresh daemon heartbeat. Run start/doctor.");
             textFile(stamp); return;
         }
@@ -567,7 +631,7 @@ public final class AppVolume {
             }
             System.out.println("STATUS\t"+(new File(data,"disabled").exists()?"disabled":"enabled"));
             File status=new File(module,"state/app-volume-status.txt");
-            if (!status.exists() || System.currentTimeMillis()-status.lastModified()>10000) System.out.println("NOTICE\t后台未运行：请在首页点启动服务，或重启平板");
+            if (!status.exists() || System.currentTimeMillis()-status.lastModified()>90000) System.out.println("NOTICE\t后台未运行：请在首页点启动服务，或重启平板");
             if (status.isFile()) for(String line:Files.readAllLines(status.toPath(),StandardCharsets.UTF_8))
                 if(line.startsWith("UID_") || line.startsWith("ERROR=")) System.out.println("RESULT\t"+line.replace('\t',' '));
             return;

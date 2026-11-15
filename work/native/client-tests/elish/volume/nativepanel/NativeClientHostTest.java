@@ -19,6 +19,7 @@ public final class NativeClientHostTest {
             public void failure(String message){errors.add(message);}
         });
         try{
+            check(!c.scheduled(),"hidden client scheduled work at construction");
             c.visible(true);check(rows.await(3,TimeUnit.SECONDS),"No UI reply");
             if(args[0].equals("socket-lifecycle")){
                 check(errors.isEmpty(),"client failed Android socket lifecycle");
@@ -30,12 +31,16 @@ public final class NativeClientHostTest {
                 unconnected.close();
             }else if(args[0].equals("untouched")){
                 c.visible(false);waitFor(()->LocalSocket.closes.get()>0);
+                waitFor(()->!c.scheduled());
+                c.visible(true);waitFor(()->c.scheduled()&&LocalSocket.calls.stream().filter(s->s.equals("UI")).count()>=2);
+                c.visible(false);waitFor(()->!c.scheduled());
                 check(LocalSocket.calls.stream().noneMatch(s->s.startsWith("SET ")),"untouched close wrote a value");
             }else if(args[0].equals("coalesce-close")){
                 for(int round=0;round<10;round++)for(int p=0;p<100;p++)c.set("com.spotify.music",10,p);
                 c.set("com.spotify.music",10,61);c.visible(false);
                 waitFor(()->Integer.valueOf(61).equals(LocalSocket.saved.get("10:com.spotify.music"))&&!c.pending("10:com.spotify.music"));
                 waitFor(()->LocalSocket.closes.get()>0);
+                waitFor(()->!c.scheduled());
                 check(Integer.valueOf(61).equals(LocalSocket.saved.get("10:com.spotify.music")),"IPC close changed saved value");
                 check(LocalSocket.calls.stream().filter(s->s.startsWith("SET ")).count()<20,"obsolete edits queued");
             }else if(args[0].equals("late-ack")){

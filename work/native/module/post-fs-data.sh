@@ -5,7 +5,7 @@ DST="$MODDIR/system/vendor/etc/audio_policy_engine_stream_volumes_mi.xml"
 mkdir -p "$MODDIR/state"
 # One log per boot; no sleep or framework/Binder calls in this blocking stage.
 {
-  echo "Elish Volume 3.1.0-key-test1 early boot"
+  echo "Elish Volume 3.2.0-stability-test1 early boot"
   date
   if [ "$(getprop ro.product.device)" != elish ]; then
     echo "ERROR: unsupported device; disable this module."

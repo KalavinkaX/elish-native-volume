@@ -24,15 +24,15 @@ public final class AppVolumeHostTest {
     static void throwsBad(Runnable r){try{r.run();throw new AssertionError("Expected invalid input");}catch(IllegalArgumentException ok){}}
     static class SessionFake implements AppVolume.EffectFactory {
         Map<Integer,Eff> items=new HashMap<Integer,Eff>();
-        int creates;
-        boolean failCreate,failLevel;
+        int creates,attempts,levelCalls,releaseCalls;
+        boolean failCreate,failLevel,failRelease;
         class Eff implements AppVolume.SessionEffect {
             int level=100;boolean released;
-            public void level(int p) throws Exception {if(failLevel)throw new IOException("parameter rejected");level=p;}
-            public void release(){released=true;}
+            public void level(int p) throws Exception {levelCalls++;if(failLevel)throw new IOException("parameter rejected");level=p;}
+            public void release() throws Exception {releaseCalls++;if(failRelease)throw new IOException("release rejected");released=true;}
         }
         public AppVolume.SessionEffect create(int session,int percent) throws Exception {
-            if(failCreate)throw new IOException("no effect engine");creates++;Eff effect=new Eff();effect.level=percent;items.put(session,effect);return effect;
+            attempts++;if(failCreate)throw new IOException("no effect engine");creates++;Eff effect=new Eff();effect.level=percent;items.put(session,effect);return effect;
         }
     }
     public static void main(String[] args) throws Exception {
@@ -97,7 +97,50 @@ public final class AppVolumeHostTest {
                 se.tick(players,levels(10212,30),0);sf.failLevel=true;
                 se.tick(players,levels(10212,5),50);check(!sf.items.get(409).released,"transient error removed attenuation");
                 check(se.report.get(10212).startsWith("ERROR:"),"real failure hidden");
-                sf.failLevel=false;se.tick(players,levels(10212,5),100);check(sf.creates==1&&sf.items.get(409).level==5,"recovery recreated effect");
+                sf.failLevel=false;se.tick(players,levels(10212,5),100);
+                check(sf.items.get(409).level==30,"cooldown ignored");
+                se.tick(players,levels(10212,5),1050);check(sf.creates==1&&sf.items.get(409).level==5,"recovery recreated effect");
+            }else if(test.equals("session-pause-expiry")){
+                se.tick(players,levels(10212,30),0);
+                players.set(0,new AppVolume.Player(375,10212,13,1,3,null,409));
+                for(int t=100;t<5000;t+=100)se.tick(players,levels(10212,30),t);
+                check(!sf.items.get(409).released,"pause grace lost");
+                se.tick(players,levels(10212,30),5000);
+                check(sf.items.get(409).released&&se.controlledCount()==0,"pause renewed forever");
+                players.set(0,new AppVolume.Player(375,10212,13,1,2,null,409));
+                se.tick(players,levels(10212,30),5100);check(sf.creates==2,"resume failed to reattach");
+            }else if(test.equals("session-explicit-stop")){
+                for(int state:new int[]{0,4}){
+                    players.set(0,new AppVolume.Player(375,10212,13,1,2,null,409));
+                    se.tick(players,levels(10212,30),0);
+                    players.set(0,new AppVolume.Player(375,10212,13,1,state,null,409));
+                    se.tick(players,levels(10212,30),10);
+                    check(sf.items.get(409).released,"explicit stop got snapshot grace");
+                }
+            }else if(test.equals("session-failure-backoff")){
+                sf.failCreate=true;
+                long time=0;
+                for(long interval:new long[]{1000,2000,4000,8000,16000,30000,30000}){
+                    int before=sf.attempts;se.tick(players,levels(10212,30),time);
+                    check(sf.attempts==before+1,"retry missing");
+                    se.tick(players,levels(10212,5),time+interval-1);
+                    check(sf.attempts==before+1,"slider bypassed backoff");
+                    check(se.report.get(10212).startsWith("ERROR:"),"cooldown hid error");time+=interval;
+                }
+                sf.failCreate=false;se.tick(players,levels(10212,5,10207,70),time);
+                check(sf.items.get(409).level==5&&sf.items.get(345).level==70,"recovery or other app failed");
+                players.clear();se.tick(players,levels(),time+1);
+                check(se.retryAt.isEmpty()&&se.lastSeen.isEmpty(),"retry metadata leaked");
+            }else if(test.equals("session-release-owner")){
+                se.tick(players,levels(10212,30),0);sf.failRelease=true;
+                players.set(0,new AppVolume.Player(375,10207,13,1,2,null,409));
+                se.tick(players,levels(10212,30,10207,70),10);
+                check(sf.items.get(409).level==30&&sf.creates==2,"old owner handle mutated");
+                // Only the healthy independent session 345 may be created.
+                int calls=sf.releaseCalls;se.tick(players,levels(10207,80),100);
+                check(sf.releaseCalls==calls&&sf.items.get(345).level==80,"release cooldown or healthy sibling failed");
+                sf.failRelease=false;se.tick(players,levels(10207,80),1010);
+                check(sf.items.get(409).level==80&&se.owners.get(409)==10207,"owner handoff failed");
             }else if(test.equals("session-remove-during-gap")){
                 se.tick(players,levels(10212,30),0);players.remove(0);
                 se.tick(players,levels(),10);check(sf.items.get(409).released,"grace delayed explicit rule removal");
@@ -194,6 +237,29 @@ public final class AppVolumeHostTest {
             AppVolume.execute(new String[]{module.toString(),data.toString(),"enable"});check(!new File(data,"disabled").exists(),"enable");
             AppVolume.execute(new String[]{module.toString(),data.toString(),"remove","com.test.a","10"});
             check(AppVolume.readRules(new File(data,"rules.tsv")).isEmpty(),"remove");
+        }else if(test.equals("daemon-idle-wake")){
+            final File module=new File(temp,"module"),data=new File(temp,"data");module.mkdirs();data.mkdirs();
+            IPackageManager.Stub.uids.put("0:com.spotify.music",10212);
+            final java.util.concurrent.atomic.AtomicReference<Throwable> error=new java.util.concurrent.atomic.AtomicReference<Throwable>();
+            Thread daemon=new Thread(()->{try{AppVolume.daemon(module,data);}catch(Throwable ex){error.set(ex);}});daemon.start();
+            try {
+                File status=new File(module,"state/app-volume-status.txt");long until=System.nanoTime()+3000000000L;
+                while(!status.exists()&&System.nanoTime()<until)Thread.sleep(10);
+                check(status.exists(),"no daemon status");
+                long modified=status.lastModified();int before=IAudioService.Stub.queries.get();
+                Thread.sleep(2200);
+                check(IAudioService.Stub.queries.get()==before,"no-rule daemon queried playback");
+                check(status.lastModified()==modified,"unchanged heartbeat written at old 2s rate");
+                AudioPlaybackConfiguration.items.add(new AudioPlaybackConfiguration(309,10212,13,1,2,new PlayerProxy()));
+                AppVolume.setRule(data,new File(data,"rules.tsv"),new AppVolume.AndroidBackend(),new AppVolume.Rule(0,"com.spotify.music",30));
+                until=System.nanoTime()+800000000L;
+                while(!AppVolume.rulesText(status).contains("PARAMETER_OK:")&&System.nanoTime()<until)Thread.sleep(10);
+                check(AppVolume.rulesText(status).contains("PARAMETER_OK:"),"idle wait did not wake for native edit");
+                check(AppVolume.pollDelay(false,true,true)==2000&&AppVolume.pollDelay(true,true,false)==1000&&AppVolume.pollDelay(true,true,true)==100,"cadence");
+                long observed=AppVolume.generation();AppVolume.signalConfigChange();long start=System.nanoTime();
+                AppVolume.awaitChange(observed,2000);check(System.nanoTime()-start<200000000L,"lost notification before wait");
+            } finally {new File(module,"disable").createNewFile();AppVolume.signalConfigChange();daemon.join(3000);}
+            check(!daemon.isAlive()&&error.get()==null,"daemon failure: "+error.get());
         }else if(test.equals("daemon-fast-update")||test.equals("daemon-panel-independent")){
             final File module=new File(temp,"module"),data=new File(temp,"data");module.mkdirs();data.mkdirs();
             IPackageManager.Stub.uids.put("0:com.spotify.music",10212);

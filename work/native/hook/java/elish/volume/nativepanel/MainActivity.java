@@ -10,7 +10,7 @@ public final class MainActivity extends Activity {
         TextView text=new TextView(this);
         int padding=(int)(24*getResources().getDisplayMetrics().density);
         text.setPadding(padding,padding,padding,padding);text.setTextSize(17);
-        text.setText("Elish 原生应用音量\n3.1.0-key-test1\n\n"
+        text.setText("Elish 原生应用音量\n3.2.0-stability-test1\n\n"
             +"1. 安装同版本 Magisk 模块。\n"
             +"2. 在 LSPosed 启用本模块，作用域勾选系统界面（com.android.systemui）及系统框架 / Android（android）。\n"
             +"3. 关闭旧版 Elish 音量键面板无障碍服务，重启平板。\n"

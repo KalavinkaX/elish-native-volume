@@ -33,7 +33,24 @@ final class NativeClient {
     LocalSocket socket;InputStream input;OutputStream output;
     volatile long pollAt;
     long retryAt,noticeAt;
-    NativeClient(Handler main,Listener listener){this.main=main;this.listener=listener;worker.scheduleWithFixedDelay(()->tick(),0,40,TimeUnit.MILLISECONDS);}
+    ScheduledFuture<?> task;
+    NativeClient(Handler main,Listener listener){this.main=main;this.listener=listener;}
+    // Only one timer while visible or draining edits. Hidden idle clients have no timer.
+    synchronized void ensureWorker(){
+        if(task==null&&!worker.isShutdown())task=worker.scheduleWithFixedDelay(()->runTick(),0,40,TimeUnit.MILLISECONDS);
+    }
+    void runTick(){
+        try{tick();}finally{
+            synchronized(this){
+                if(!visible&&pending.isEmpty()){
+                    close();
+                    if(task!=null){task.cancel(false);task=null;}
+                }
+            }
+        }
+    }
+    synchronized boolean scheduled(){return task!=null;}
+
     static int number(String s,int max)throws IOException{
         if(!s.matches("0|[1-9][0-9]{0,4}"))throw new IOException("Invalid number");
         int n=Integer.parseInt(s);if(n>max)throw new IOException("Number out of range");return n;
@@ -41,10 +58,10 @@ final class NativeClient {
     synchronized void set(String pkg,int user,int percent){
         if(!pkg.matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")||user<0||user>21474||percent<0||percent>100)throw new IllegalArgumentException("Invalid volume update");
         if(pending.size()>=64&&!pending.containsKey(user+":"+pkg))throw new IllegalStateException("Too many updates");
-        pending.put(user+":"+pkg,new Update(pkg,user,percent));
+        pending.put(user+":"+pkg,new Update(pkg,user,percent));ensureWorker();
     }
     synchronized boolean pending(String key){return pending.containsKey(key);}
-    void visible(boolean value){visible=value;if(value)pollAt=0;}
+    synchronized void visible(boolean value){visible=value;if(value)pollAt=0;if(value||task!=null||!pending.isEmpty())ensureWorker();}
     static String line(InputStream in)throws IOException{
         ByteArrayOutputStream bytes=new ByteArrayOutputStream();
         for(int c;(c=in.read())!=-1;){

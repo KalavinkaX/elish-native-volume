@@ -1,6 +1,6 @@
-# Elish 原生分应用音量 3.1.0-key-test1
+# Elish 原生分应用音量 3.2.0-stability-test1
 
-用户反馈3.0.2的应用列表、图标和音量问题均已测试良好。本版保留这些实现，新增扬声器媒体音量键长按加速。0–100索引范围、曲线、单按精度和分应用后台不变；新增系统框架Hook仍需设备测试。
+用户反馈 3.1.0 的应用列表、图标、满音量切换及长按加速已测试良好。本版保留这些实现，修复后台轮询、异常重试、暂停资源保留及隐藏界面定时任务；新版尚未在设备实测。0–100 整数范围、低音量曲线和会话隔离保留。
 
 ## 安装条件
 
@@ -15,8 +15,8 @@
 ## 安装顺序
 
 1. 在系统辅助功能设置中关闭旧服务「Elish 音量键面板」。建议随后卸载旧应用「Elish 分应用音量」，避免旧服务/旧界面的刷新继续调用 su。卸载旧 APK 不删除 /data/adb/elish_volume_steps/ 中的规则。
-2. 在 Magisk 从本地安装 Elish-Volume-Steps-Magisk-v3.1.0-key-test1.zip。模块 ID 仍为 elish_volume_steps，覆盖升级即可，既有规则保留。
-3. 安装 Elish-Volume-Native-LSPosed-v3.1.0-key-test1.apk。
+2. 在 Magisk 从本地安装 Elish-Volume-Steps-Magisk-v3.2.0-stability-test1.zip。模块 ID 仍为 elish_volume_steps，覆盖升级即可，既有规则保留。
+3. 安装 Elish-Volume-Native-LSPosed-v3.2.0-stability-test1.apk。
 4. 在 LSPosed 启用「Elish 原生应用音量」，作用域勾选「系统界面 / System UI」（com.android.systemui）及「系统框架 / Android」（android）。新增后者是因为实体音量键处理位于 system_server；各播放应用无需勾选。
 5. 重启平板，使新后台与 SystemUI Hook 一起生效。
 6. 播放 Spotify，按音量键，再点击系统音量窗口的更多按钮。新增滑块应在系统展开面板内，标签为「Spotify · 应用音量」等。
@@ -101,3 +101,10 @@
 撤销应用衰减可在 root 终端执行：sh /data/adb/modules/elish_volume_steps/app-volume.sh disable。后台恢复它持有的应用音效，不改变系统总音量。
 
 也可在 Magisk 禁用本模块并重启，同时在 LSPosed 禁用注入组件。数据目录中的规则保留以便恢复。
+
+
+## 3.2 稳定性预发布
+
+本版新增自适应轮询、音效失败 1–30 秒退避、暂停会话约 5 秒到期、隐藏后取消 UI 定时任务及 30 秒状态心跳。普通面板保存设置会通知后台立即检查；空闲后新播放的既有规则可能等待约 1 秒才应用。请先以较低系统音量测试两个应用、100% 来回切换、暂停超过 5 秒后恢复及熄屏播放。
+
+上一版功能已由作者设备测试，本版只有主机回归和 ROM ABI 验证，尚未完成设备实测。代码检查不能判断此前 CPU 焊点或无法开机的原因。本版不修改 CPU、电压、温控或充电参数，也不能视作硬件故障修复。

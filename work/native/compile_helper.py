@@ -41,7 +41,7 @@ def compile_helper():
         entry.compress_type=zipfile.ZIP_DEFLATED
         z.writestr(entry,(dex/"classes.dex").read_bytes())
     (ROOT/"evidence/HELPER-BUILD.txt").write_text(
-        "JDK: "+str(JAVA_HOME)+"\nSource bytecode: javac --release 8\nD8: "+R8_URL+
+        "JDK: externally supplied JDK (local path omitted)"+"\nSource bytecode: javac --release 8\nD8: "+R8_URL+
         "\nR8 SHA256: "+hashlib.sha256(R8.read_bytes()).hexdigest()+
         "\nHelper source SHA256: "+hashlib.sha256(b"".join(p.read_bytes() for p in sorted(sources))).hexdigest()+
         "\nDEX minimum API: 26; no Android stubs are bundled.\n",encoding="utf-8",newline="\n")

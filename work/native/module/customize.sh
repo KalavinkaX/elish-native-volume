@@ -1,5 +1,5 @@
 #!/system/bin/sh
-ui_print "- Elish Native App Volume v3.1.0-key-test1"
+ui_print "- Elish Native App Volume v3.2.0-stability-test1"
 [ "$BOOTMODE" = true ] || abort "! Install from the Magisk app in Android."
 [ "$MAGISK_VER_CODE" -ge 20400 ] || abort "! Magisk 20.4+ required."
 DEVICE="$(getprop ro.product.device)"
