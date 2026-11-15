@@ -95,13 +95,15 @@ def main():
         assert 'Elish-Volume-Panel.apk' not in z.namelist()
     companion=OUT/('Elish-Volume-Native-LSPosed-v'+VERSION+'.apk');shutil.copyfile(apk,companion)
     instructions=OUT/('安装与原生音量说明-v'+VERSION+'.md');shutil.copyfile(module/'README.zh-CN.md',instructions)
-    sourcefiles=[(p,'module/'+name) for p,name in files]
-    sourcefiles += [(p,p.relative_to(ROOT).as_posix()) for folder in ('hook','host-tests','client-tests','panel','evidence') for p in (ROOT/folder).rglob('*') if p.is_file()]
-    sourcefiles += [(p,p.name) for p in ROOT.glob('*.py')]
-    sourcefiles += [(ROOT/n,n) for n in ('ROM-ABI.txt','SERVICES-ABI.txt','APK-BUILD.txt','DEPENDENCIES.md','seapp-evidence.txt')]
+    # Preserve the repository layout so the source ZIP can use the documented build.
+    # Compiled APK/JAR files belong in the install artifacts, not the source archive.
+    sourcefiles=[(p,'work/native/module/'+name) for p,name in files if p.suffix not in ('.jar','.apk')]
+    sourcefiles += [(p,'work/native/'+p.relative_to(ROOT).as_posix()) for folder in ('hook','host-tests','client-tests','panel','evidence') for p in (ROOT/folder).rglob('*') if p.is_file()]
+    sourcefiles += [(p,'work/native/'+p.name) for p in ROOT.glob('*.py')]
+    sourcefiles += [(ROOT/n,'work/native/'+n) for n in ('ROM-ABI.txt','SERVICES-ABI.txt','APK-BUILD.txt','DEPENDENCIES.md','seapp-evidence.txt')]
     sourcefiles += [(testreport,'HOST-TEST-REPORT.txt')]
-    sourcefiles += [(ROOT.parents[1]/name,'repository/'+name) for name in ('README.md','LICENSE','CHANGELOG.md')]
-    sourcefiles += [(p,'repository/docs/'+p.name) for p in (ROOT.parents[1]/'docs').glob('*.md')]
+    sourcefiles += [(ROOT.parents[1]/name,name) for name in ('README.md','LICENSE','CHANGELOG.md','.gitignore','.gitattributes')]
+    sourcefiles += [(p,'docs/'+p.name) for p in (ROOT.parents[1]/'docs').glob('*.md')]
     source=OUT/('Elish-Volume-Native-v'+VERSION+'-source.zip');archive(source,sourcefiles)
     with zipfile.ZipFile(source) as z:assert not any(n.endswith(('.p12','.jks')) or 'signing-password' in n for n in z.namelist())
     deliverables=[package,companion,instructions,testreport,source]
